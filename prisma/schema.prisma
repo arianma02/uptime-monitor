@@ -20,4 +20,17 @@ model Monitor {
   intervalMinutes Int      @default(5)
   active          Boolean  @default(true)
   createdAt       DateTime @default(now())
+  checkResults CheckResult[]
+}
+
+model CheckResult {
+  id             Int      @id @default(autoincrement())
+  monitorId      Int
+  isUp           Boolean
+  statusCode     Int?
+  responseTimeMs Int
+  error          String?
+  checkedAt      DateTime @default(now())
+
+  monitor Monitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
 }
