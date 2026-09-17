@@ -8,6 +8,8 @@ import {
   Delete,
 } from '@nestjs/common';
 import { MonitorsService } from './monitors.service';
+import { CreateMonitorDto } from './dto/create-monitor.dto.js';
+import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
 
 @Controller('monitors')
 export class MonitorsController {
@@ -19,15 +21,8 @@ export class MonitorsController {
   }
 
   @Post()
-  create(
-    @Body()
-    body: {
-      name: string;
-      url: string;
-      intervalMinutes?: number;
-    },
-  ) {
-    return this.monitorsService.create(body);
+  create(@Body() data: CreateMonitorDto) {
+    return this.monitorsService.create(data);
   }
 
   @Get(':id')
@@ -36,17 +31,8 @@ export class MonitorsController {
   }
 
   @Patch(':id')
-  update(
-    @Param('id') id: string,
-    @Body()
-    body: {
-      name?: string;
-      url?: string;
-      intervalMinutes?: number;
-      active?: boolean;
-    },
-  ) {
-    return this.monitorsService.update(Number(id), body);
+  update(@Param('id') id: string, @Body() data: UpdateMonitorDto) {
+    return this.monitorsService.update(Number(id), data);
   }
 
   @Delete(':id')
