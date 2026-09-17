@@ -39,6 +39,7 @@ jobs:
       - name: Create test environment
         run: |
           echo 'DATABASE_URL="postgresql://postgres:postgres@localhost:5434/uptime_monitor_test"' > .env.test
+          echo 'DIRECT_URL="postgresql://postgres:postgres@localhost:5434/uptime_monitor_test"' >> .env.test
           echo 'ADMIN_KEY="test-admin-key"' >> .env.test
 
       - name: Generate Prisma client
