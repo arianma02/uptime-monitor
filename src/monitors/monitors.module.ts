@@ -3,7 +3,7 @@ import { MonitorsController } from './monitors.controller';
 import { MonitorsService } from './monitors.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AdminKeyGuard } from './admin-key.guard';
-import { MonitorsScheduler } from './scheduler';
+import { MonitorsScheduler } from './monitors.scheduler';
 
 @Module({
   imports: [PrismaModule],

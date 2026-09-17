@@ -1,5 +1,7 @@
-import { PrismaService } from '../prisma/prisma.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service.js';
+import { CreateMonitorDto } from './dto/create-monitor.dto.js';
+import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
 import { assertSafeUrl } from './url-safety.js';
 
 @Injectable()
@@ -10,33 +12,36 @@ export class MonitorsService {
     return this.prisma.monitor.findMany();
   }
 
-  create(data: { name: string; url: string; intervalMinutes?: number }) {
+  create(data: CreateMonitorDto) {
     return this.prisma.monitor.create({
       data,
     });
   }
-  findOne(id: number) {
-    return this.prisma.monitor.findUnique({
+
+  async findOne(id: number) {
+    const monitor = await this.prisma.monitor.findUnique({
       where: { id },
     });
+
+    if (!monitor) {
+      throw new NotFoundException('Monitor not found');
+    }
+
+    return monitor;
   }
 
-  update(
-    id: number,
-    data: {
-      name?: string;
-      url?: string;
-      intervalMinutes?: number;
-      active?: boolean;
-    },
-  ) {
+  async update(id: number, data: UpdateMonitorDto) {
+    await this.findOne(id);
+
     return this.prisma.monitor.update({
       where: { id },
       data,
     });
   }
 
-  remove(id: number) {
+  async remove(id: number) {
+    await this.findOne(id);
+
     return this.prisma.monitor.delete({
       where: { id },
     });
@@ -107,41 +112,43 @@ export class MonitorsService {
   }
 
   async checkDueMonitors(): Promise<void> {
-  const monitors = await this.prisma.monitor.findMany({
-    where: {
-      active: true,
-    },
-    include: {
-      checkResults: {
-        orderBy: {
-          checkedAt: 'desc',
-        },
-        take: 1,
+    const monitors = await this.prisma.monitor.findMany({
+      where: {
+        active: true,
       },
-    },
-  });
+      include: {
+        checkResults: {
+          orderBy: {
+            checkedAt: 'desc',
+          },
+          take: 1,
+        },
+      },
+    });
 
-  const now = Date.now();
+    const now = Date.now();
 
-  for (const monitor of monitors) {
-  const lastCheck = monitor.checkResults[0];
+    for (const monitor of monitors) {
+      const lastCheck = monitor.checkResults[0];
 
-  // Check immediately if there is no history, otherwise wait until the monitor's interval has elapsed.
-  const isDue =
-    !lastCheck ||
-    now >=
-      lastCheck.checkedAt.getTime() +
-        monitor.intervalMinutes * 60_000;
+      // Check immediately if there is no history, otherwise wait until the monitor's interval has elapsed.
+      const isDue =
+        !lastCheck ||
+        now >= lastCheck.checkedAt.getTime() + monitor.intervalMinutes * 60_000;
 
-  if (!isDue) {
-    continue;
-  }
+      if (!isDue) {
+        continue;
+      }
 
-  // Keep processing other monitors even if one scheduled check fails.
-  try {
-    await this.check(monitor.id);
-  } catch (error) {
-    console.error(`Scheduled check failed for monitor ${monitor.id}`, error);
+      // Keep processing other monitors even if one scheduled check fails.
+      try {
+        await this.check(monitor.id);
+      } catch (error) {
+        console.error(
+          `Scheduled check failed for monitor ${monitor.id}`,
+          error,
+        );
+      }
+    }
   }
 }
-}}
