@@ -105,4 +105,43 @@ export class MonitorsService {
       },
     });
   }
+
+  async checkDueMonitors(): Promise<void> {
+  const monitors = await this.prisma.monitor.findMany({
+    where: {
+      active: true,
+    },
+    include: {
+      checkResults: {
+        orderBy: {
+          checkedAt: 'desc',
+        },
+        take: 1,
+      },
+    },
+  });
+
+  const now = Date.now();
+
+  for (const monitor of monitors) {
+  const lastCheck = monitor.checkResults[0];
+
+  // Check immediately if there is no history, otherwise wait until the monitor's interval has elapsed.
+  const isDue =
+    !lastCheck ||
+    now >=
+      lastCheck.checkedAt.getTime() +
+        monitor.intervalMinutes * 60_000;
+
+  if (!isDue) {
+    continue;
+  }
+
+  // Keep processing other monitors even if one scheduled check fails.
+  try {
+    await this.check(monitor.id);
+  } catch (error) {
+    console.error(`Scheduled check failed for monitor ${monitor.id}`, error);
+  }
 }
+}}
