@@ -7,6 +7,7 @@ import {
   Patch,
   Delete,
   UseGuards,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { MonitorsService } from './monitors.service';
 import { CreateMonitorDto } from './dto/create-monitor.dto.js';
@@ -29,30 +30,33 @@ export class MonitorsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.monitorsService.findOne(Number(id));
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.monitorsService.findOne(id);
   }
 
   @Patch(':id')
   @UseGuards(AdminKeyGuard)
-  update(@Param('id') id: string, @Body() data: UpdateMonitorDto) {
-    return this.monitorsService.update(Number(id), data);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: UpdateMonitorDto,
+  ) {
+    return this.monitorsService.update(id, data);
   }
 
   @Delete(':id')
   @UseGuards(AdminKeyGuard)
-  remove(@Param('id') id: string) {
-    return this.monitorsService.remove(Number(id));
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.monitorsService.remove(id);
   }
 
   @Post(':id/check')
   @UseGuards(AdminKeyGuard)
-  check(@Param('id') id: string) {
-    return this.monitorsService.check(Number(id));
+  check(@Param('id', ParseIntPipe) id: number) {
+    return this.monitorsService.check(id);
   }
 
   @Get(':id/checks')
-  findChecks(@Param('id') id: string) {
-    return this.monitorsService.findChecks(Number(id));
+  findChecks(@Param('id', ParseIntPipe) id: number) {
+    return this.monitorsService.findChecks(id);
   }
 }

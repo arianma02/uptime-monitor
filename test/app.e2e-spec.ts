@@ -196,6 +196,12 @@ describe('App (e2e)', () => {
     await request(app.getHttpServer()).get('/monitors/999999').expect(404);
   });
 
+  it('GET /monitors/:id returns 400 for an invalid id', async () => {
+    await request(app.getHttpServer())
+      .get('/monitors/not-a-number')
+      .expect(400);
+  });
+
   it('POST /monitors rejects unknown properties', async () => {
     await request(app.getHttpServer())
       .post('/monitors')
@@ -281,5 +287,101 @@ describe('App (e2e)', () => {
       .delete('/monitors/999999')
       .set('X-Admin-Key', 'test-admin-key')
       .expect(404);
+  });
+
+  it('GET /monitors/:id/checks returns check history newest first', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/monitors')
+      .set('X-Admin-Key', 'test-admin-key')
+      .send({
+        name: 'Google',
+        url: 'https://www.google.com',
+        intervalMinutes: 5,
+      })
+      .expect(201);
+
+    const monitorId = created.body.id;
+
+    await prisma.checkResult.create({
+      data: {
+        monitorId,
+        isUp: false,
+        statusCode: 500,
+        responseTimeMs: 200,
+        checkedAt: new Date('2026-09-17T12:00:00.000Z'),
+      },
+    });
+
+    await prisma.checkResult.create({
+      data: {
+        monitorId,
+        isUp: true,
+        statusCode: 200,
+        responseTimeMs: 100,
+        checkedAt: new Date('2026-09-17T12:05:00.000Z'),
+      },
+    });
+
+    const response = await request(app.getHttpServer())
+      .get(`/monitors/${monitorId}/checks`)
+      .expect(200);
+
+    expect(response.body).toHaveLength(2);
+
+    expect(response.body[0]).toMatchObject({
+      monitorId,
+      isUp: true,
+      statusCode: 200,
+      responseTimeMs: 100,
+    });
+
+    expect(response.body[1]).toMatchObject({
+      monitorId,
+      isUp: false,
+      statusCode: 500,
+      responseTimeMs: 200,
+    });
+  });
+
+  it('GET /monitors/:id/checks returns 404 for a nonexistent monitor', async () => {
+    await request(app.getHttpServer())
+      .get('/monitors/999999/checks')
+      .expect(404);
+  });
+
+  it('deleting a monitor also deletes its check history', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/monitors')
+      .set('X-Admin-Key', 'test-admin-key')
+      .send({
+        name: 'Google',
+        url: 'https://www.google.com',
+        intervalMinutes: 5,
+      })
+      .expect(201);
+
+    const monitorId = created.body.id;
+
+    await prisma.checkResult.create({
+      data: {
+        monitorId,
+        isUp: true,
+        statusCode: 200,
+        responseTimeMs: 100,
+      },
+    });
+
+    await request(app.getHttpServer())
+      .delete(`/monitors/${monitorId}`)
+      .set('X-Admin-Key', 'test-admin-key')
+      .expect(200);
+
+    const remainingChecks = await prisma.checkResult.findMany({
+      where: {
+        monitorId,
+      },
+    });
+
+    expect(remainingChecks).toHaveLength(0);
   });
 });

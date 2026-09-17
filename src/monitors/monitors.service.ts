@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateMonitorDto } from './dto/create-monitor.dto.js';
 import { UpdateMonitorDto } from './dto/update-monitor.dto.js';
@@ -56,11 +60,10 @@ export class MonitorsService {
       throw new NotFoundException('Monitor not found');
     }
 
-    await assertSafeUrl(monitor.url);
-
     const start = performance.now();
 
     try {
+      await assertSafeUrl(monitor.url);
       const response = await fetch(monitor.url, {
         signal: AbortSignal.timeout(5000),
         // Don't automatically follow redirects to an unchecked destination.
@@ -78,6 +81,9 @@ export class MonitorsService {
         },
       });
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       const responseTimeMs = Math.round(performance.now() - start);
 
       return this.prisma.checkResult.create({
