@@ -18,6 +18,7 @@ const config: Config = {
     '^.+\\.(t|j)s$': 'ts-jest',
   },
   moduleNameMapper: {
+  // Allow Jest to resolve ESM `.js` imports to their TypeScript source files.
   '^(\\.{1,2}/.*)\\.js$': '$1',
   ...pathsToModuleNameMapper(paths, { prefix: '<rootDir>/' }),
 },

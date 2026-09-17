@@ -1,5 +1,6 @@
 import { PrismaService } from '../prisma/prisma.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { assertSafeUrl } from './url-safety.js';
 
 @Injectable()
 export class MonitorsService {
@@ -50,11 +51,14 @@ export class MonitorsService {
       throw new NotFoundException('Monitor not found');
     }
 
+    await assertSafeUrl(monitor.url);
+
     const start = performance.now();
 
     try {
       const response = await fetch(monitor.url, {
         signal: AbortSignal.timeout(5000),
+        // Don't automatically follow redirects to an unchecked destination.
         redirect: 'manual',
       });
 
