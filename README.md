@@ -10,7 +10,7 @@ Includes a NestJS API and a read-only React dashboard.
 https://uptime-monitor-dashboard.onrender.com
 
 **API:**  
-https://uptime-monitor-5018.onrender.com
+https://uptime-monitor-50l8.onrender.com
 
 ## Features
 
