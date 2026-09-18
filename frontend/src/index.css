@@ -1,0 +1,31 @@
+/* Global */
+
+html {
+  background: #090d14;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+/* Message States */
+
+.message-state {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  background: #090d14;
+}
+
+.message-state strong {
+  font-size: 18px;
+}
+
+.message-state span {
+  color: #7f8da3;
+  font-size: 14px;
+}
