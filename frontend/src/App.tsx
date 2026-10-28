@@ -1,31 +1,12 @@
 import { useEffect, useState } from 'react';
 import './App.css';
+import {
+  getMonitorStatus,
+  loadMonitors,
+  type MonitorWithStatus,
+} from './monitors';
 
-const API_URL = import.meta.env.VITE_API_URL;
-
-type CheckResult = {
-  id: number;
-  monitorId: number;
-  isUp: boolean;
-  statusCode: number | null;
-  responseTimeMs: number;
-  error: string | null;
-  checkedAt: string;
-};
-
-type Monitor = {
-  id: number;
-  name: string;
-  url: string;
-  intervalMinutes: number;
-  active: boolean;
-  createdAt: string;
-};
-
-type MonitorWithStatus = Monitor & {
-  latestCheck?: CheckResult;
-  recentChecks: CheckResult[];
-};
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 function App() {
   const [monitors, setMonitors] = useState<MonitorWithStatus[]>([]);
@@ -36,68 +17,65 @@ function App() {
   );
   const [error, setError] = useState<string | null>(null);
 
-  async function loadMonitors() {
-    try {
-      setError(null);
-      const response = await fetch(`${API_URL}/monitors`);
-
-      if (!response.ok) {
-        throw new Error('Failed to load monitors');
-      }
-
-      const monitorData: Monitor[] = await response.json();
-
-      const monitorsWithStatus = await Promise.all(
-        monitorData.map(async (monitor) => {
-          const checksResponse = await fetch(
-            `${API_URL}/monitors/${monitor.id}/checks`,
-          );
-
-          const checks: CheckResult[] = checksResponse.ok
-            ? await checksResponse.json()
-            : [];
-
-          return {
-            ...monitor,
-            latestCheck: checks[0],
-            recentChecks: checks.slice(0, 5),
-          };
-        }),
-      );
-
-      setMonitors(monitorsWithStatus);
-      setLastUpdated(new Date());
-    } catch (caughtError) {
-      console.error('Failed to load monitoring data', caughtError);
-      setError('Unable to load monitoring data.');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [now, setNow] = useState(Date.now);
 
   useEffect(() => {
-    void loadMonitors();
+    const controller = new AbortController();
+    let refreshing = false;
 
+    async function refresh() {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const data = await loadMonitors(API_URL, controller.signal);
+        if (controller.signal.aborted) return;
+        setMonitors((previous) =>
+          data.map((monitor) => {
+            const old = previous.find((item) => item.id === monitor.id);
+            return monitor.historyError && old
+              ? {
+                  ...monitor,
+                  latestCheck: old.latestCheck,
+                  recentChecks: old.recentChecks,
+                }
+              : monitor;
+          }),
+        );
+        setLastUpdated(new Date());
+        setError(null);
+      } catch {
+        if (!controller.signal.aborted)
+          setError('Unable to refresh monitoring data.');
+      } finally {
+        refreshing = false;
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+
+    void refresh();
     const interval = setInterval(() => {
-      void loadMonitors();
+      setNow(Date.now());
+      void refresh();
     }, 60_000);
-
-    return () => clearInterval(interval);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
   }, []);
 
   const upCount = monitors.filter(
-    (monitor) => monitor.latestCheck?.isUp,
+    (monitor) => getMonitorStatus(monitor, now) === 'up',
   ).length;
 
   const downCount = monitors.filter(
-    (monitor) => monitor.latestCheck && !monitor.latestCheck.isUp,
+    (monitor) => getMonitorStatus(monitor, now) === 'down',
   ).length;
 
   if (loading) {
     return <div className="loading">Loading monitoring data...</div>;
   }
 
-  if (error) {
+  if (error && monitors.length === 0) {
     return (
       <div className="message-state">
         <strong>Unable to load monitoring data</strong>
@@ -124,6 +102,9 @@ function App() {
           </div>
         </header>
 
+        {error && (
+          <p role="alert">{error} Showing previously loaded results.</p>
+        )}
         <section className="summary">
           <div className="summary-card">
             <span>Monitors</span>
@@ -165,7 +146,7 @@ function App() {
           {monitors.map((monitor) => {
             const check = monitor.latestCheck;
 
-            const status = !check ? 'unknown' : check.isUp ? 'up' : 'down';
+            const status = getMonitorStatus(monitor, now);
 
             const isExpanded = expandedMonitorId === monitor.id;
 
@@ -208,7 +189,7 @@ function App() {
                       <span>Last checked</span>
                       <strong>
                         {check
-                          ? new Date(check.checkedAt).toLocaleTimeString([], {
+                          ? new Date(check.checkedAt).toLocaleString([], {
                               hour: '2-digit',
                               minute: '2-digit',
                             })
@@ -217,6 +198,13 @@ function App() {
                     </div>
                   </div>
 
+                  {monitor.historyError && (
+                    <p role="alert">{monitor.historyError}</p>
+                  )}
+                  {status === 'stale' && (
+                    <p>Last result is overdue for an update.</p>
+                  )}
+                  {status === 'redirect' && <p>Redirect not followed.</p>}
                   <button
                     className="history-button"
                     onClick={() =>
@@ -231,7 +219,11 @@ function App() {
                   <div className="history-panel">
                     <p className="history-title">Recent checks</p>
 
-                    {monitor.recentChecks.length === 0 ? (
+                    {monitor.historyError && (
+                      <p role="alert">{monitor.historyError}</p>
+                    )}
+                    {monitor.recentChecks.length === 0 &&
+                    !monitor.historyError ? (
                       <p className="history-empty">No checks yet.</p>
                     ) : (
                       <div className="history-list">
@@ -261,7 +253,13 @@ function App() {
                                   : 'history-status down'
                               }
                             >
-                              {result.isUp ? 'UP' : 'DOWN'}
+                              {result.statusCode !== null &&
+                              result.statusCode >= 300 &&
+                              result.statusCode < 400
+                                ? 'REDIRECT'
+                                : result.isUp
+                                  ? 'UP'
+                                  : 'DOWN'}
                             </strong>
 
                             <span>{result.responseTimeMs} ms</span>

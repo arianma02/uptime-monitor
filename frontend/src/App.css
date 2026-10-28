@@ -415,3 +415,16 @@ h1 {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+.status-text.paused,
+.status-text.stale,
+.status-text.error,
+.status-text.redirect {
+  color: #9a6700;
+}
+.status-indicator.paused,
+.status-indicator.stale,
+.status-indicator.error,
+.status-indicator.redirect {
+  background: #9a6700;
+}

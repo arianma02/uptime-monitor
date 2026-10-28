@@ -13,15 +13,17 @@ const paths = tsconfig?.compilerOptions?.paths ?? {};
 const config: Config = {
   moduleFileExtensions: ['js', 'json', 'ts'],
   rootDir: '.',
+  setupFiles: ['<rootDir>/test/setup.ts'],
+  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/frontend/'],
   testRegex: '.*\\.spec\\.ts$',
   transform: {
     '^.+\\.(t|j)s$': 'ts-jest',
   },
   moduleNameMapper: {
-  // Allow Jest to resolve ESM `.js` imports to their TypeScript source files.
-  '^(\\.{1,2}/.*)\\.js$': '$1',
-  ...pathsToModuleNameMapper(paths, { prefix: '<rootDir>/' }),
-},
+    // Allow Jest to resolve ESM `.js` imports to their TypeScript source files.
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+    ...pathsToModuleNameMapper(paths, { prefix: '<rootDir>/' }),
+  },
   collectCoverageFrom: [
     'src/**/*.(t|j)s',
     'libs/**/*.(t|j)s',

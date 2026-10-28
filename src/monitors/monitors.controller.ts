@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   ParseIntPipe,
+  Query,
 } from '@nestjs/common';
 import { MonitorsService } from './monitors.service';
 import { CreateMonitorDto } from './dto/create-monitor.dto.js';
@@ -56,7 +57,13 @@ export class MonitorsController {
   }
 
   @Get(':id/checks')
-  findChecks(@Param('id', ParseIntPipe) id: number) {
-    return this.monitorsService.findChecks(id);
+  findChecks(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('limit') limit?: string,
+  ) {
+    return this.monitorsService.findChecks(
+      id,
+      limit === undefined ? 100 : Number(limit),
+    );
   }
 }

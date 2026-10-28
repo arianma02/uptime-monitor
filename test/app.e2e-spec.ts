@@ -11,6 +11,13 @@ describe('App (e2e)', () => {
   let prisma: PrismaService;
 
   beforeEach(async () => {
+    if (!process.env.TEST_DATABASE_URL) {
+      throw new Error(
+        'Set TEST_DATABASE_URL to a disposable uptime_monitor_test database',
+      );
+    }
+    process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+    process.env.ADMIN_KEY = 'test-admin-key';
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
@@ -32,12 +39,21 @@ describe('App (e2e)', () => {
 
     await app.init();
 
+    const databases = await prisma.$queryRaw<
+      { name: string }[]
+    >`SELECT current_database() AS name`;
+    if (databases[0]?.name !== 'uptime_monitor_test') {
+      throw new Error(
+        'Refusing to clear a database other than uptime_monitor_test',
+      );
+    }
+
     await prisma.checkResult.deleteMany();
     await prisma.monitor.deleteMany();
   });
 
   afterEach(async () => {
-    await app.close();
+    if (app) await app.close();
   });
 
   it('/ (GET)', () => {
@@ -383,5 +399,50 @@ describe('App (e2e)', () => {
     });
 
     expect(remainingChecks).toHaveLength(0);
+  });
+
+  it('limits history and rejects invalid limits', async () => {
+    const monitor = await prisma.monitor.create({
+      data: { name: 'Test', url: 'https://8.8.8.8', intervalMinutes: 5 },
+    });
+    await prisma.checkResult.create({
+      data: {
+        monitorId: monitor.id,
+        isUp: true,
+        responseTimeMs: 10,
+        checkedAt: new Date('2026-10-28T12:00:00Z'),
+      },
+    });
+    const latest = await prisma.checkResult.create({
+      data: {
+        monitorId: monitor.id,
+        isUp: false,
+        responseTimeMs: 20,
+        checkedAt: new Date('2026-10-28T12:01:00Z'),
+      },
+    });
+    const response = await request(app.getHttpServer())
+      .get(`/monitors/${monitor.id}/checks?limit=1`)
+      .expect(200);
+    expect(response.body).toHaveLength(1);
+    expect(response.body[0].id).toBe(latest.id);
+    await prisma.checkResult.createMany({
+      data: Array.from({ length: 100 }, () => ({
+        monitorId: monitor.id,
+        isUp: true,
+        responseTimeMs: 10,
+        checkedAt: new Date('2026-10-28T11:00:00Z'),
+      })),
+    });
+    const defaultHistory = await request(app.getHttpServer())
+      .get(`/monitors/${monitor.id}/checks`)
+      .expect(200);
+    expect(defaultHistory.body).toHaveLength(100);
+    expect(defaultHistory.body[0].id).toBe(latest.id);
+    for (const limit of ['0', '101', 'abc', '1.5']) {
+      await request(app.getHttpServer())
+        .get(`/monitors/${monitor.id}/checks?limit=${limit}`)
+        .expect(400);
+    }
   });
 });

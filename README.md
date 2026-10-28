@@ -50,7 +50,7 @@ https://uptime-monitor-50l8.onrender.com
 
 - Docker
 - GitHub Actions
-- ESLint
+- oxlint
 - Prettier
 
 ## API
@@ -123,8 +123,8 @@ FRONTEND_URL="http://localhost:5173"
 Generate the Prisma client and apply migrations:
 
 ```bash
-npx prisma generate
-npx prisma migrate deploy
+npx prisma generate --config prisma7.config.ts
+npx prisma migrate deploy --config prisma7.config.ts
 ```
 
 Start the API:
@@ -158,23 +158,34 @@ The dashboard runs at `http://localhost:5173`.
 
 ## Testing
 
-Unit tests cover monitoring logic, scheduler behavior, network failures, and URL validation.
-
-E2E tests use a separate PostgreSQL database and cover the API, validation, protected admin endpoints, check history, and cascade deletion.
-
-Start the test database and apply migrations:
-
-```bash
-docker compose -f compose.test.yml up -d
-npx dotenv -e .env.test -- npx prisma migrate deploy
-```
-
-Run the tests:
+Unit tests cover monitoring, overlapping checks, timeouts, network and database failures, and URL validation:
 
 ```bash
 npm test -- --runInBand
+```
+
+For API tests, start the disposable test database and run these commands in a separate PowerShell terminal:
+
+```powershell
+docker compose -f compose.test.yml up -d
+$env:TEST_DATABASE_URL = "postgresql://postgres:postgres@localhost:5434/uptime_monitor_test"
+$env:DIRECT_URL = $env:TEST_DATABASE_URL
+$env:DOTENV_CONFIG_PATH = "__unused_for_tests__"
+npx prisma migrate deploy --config prisma7.config.ts
 npm run test:e2e
 ```
+
+API tests clear test data between cases. They require `TEST_DATABASE_URL`, ignore local dotenv files, and check the connected database name before deletion. Use a dedicated `uptime_monitor_test` database and run tests serially.
+
+From `frontend`, run `npm test`, `npm run lint`, and `npm run build`. Frontend tests cover status calculation and failed API responses using mocked requests.
+
+## Monitoring behavior
+
+- Manual checks return 409 if that monitor is already being checked. Scheduled checks skip monitors already running, and scheduler batches cannot overlap within one backend process.
+- DNS validation and the HTTP request share a five-second deadline. Database failures are reported separately from website failures.
+- Redirects are not followed. HTTP 3xx results appear as REDIRECT rather than DOWN.
+- History defaults to the latest 100 results; `?limit=1` through `?limit=100` selects fewer. The dashboard requests five.
+- Inactive monitors appear as PAUSED. Results older than the monitor interval plus two minutes appear as STALE. Failed refreshes show an error and retain previously loaded results.
 
 ## Security
 
@@ -186,7 +197,7 @@ npm run test:e2e
 
 ## CI
 
-GitHub Actions runs linting, unit tests, E2E tests, and the production build on pushes and pull requests.
+GitHub Actions runs backend lint, unit tests, API tests, and build, plus frontend tests, lint, and build, on pushes and pull requests.
 
 ## Deployment
 

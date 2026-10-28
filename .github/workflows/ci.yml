@@ -23,6 +23,12 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5434/uptime_monitor_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5434/uptime_monitor_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5434/uptime_monitor_test
+      DOTENV_CONFIG_PATH: /dev/null
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -36,17 +42,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Create test environment
-        run: |
-          echo 'DATABASE_URL="postgresql://postgres:postgres@localhost:5434/uptime_monitor_test"' > .env.test
-          echo 'DIRECT_URL="postgresql://postgres:postgres@localhost:5434/uptime_monitor_test"' >> .env.test
-          echo 'ADMIN_KEY="test-admin-key"' >> .env.test
-
       - name: Generate Prisma client
-        run: npx dotenv -e .env.test -- npx prisma generate
+        run: npx prisma generate --config prisma7.config.ts
 
       - name: Apply test database migrations
-        run: npx dotenv -e .env.test -- npx prisma migrate deploy
+        run: npx prisma migrate deploy --config prisma7.config.ts
 
       - name: Lint
         run: npm run lint
@@ -59,3 +59,14 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Check frontend
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm test
+          npm run build

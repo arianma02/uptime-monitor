@@ -1,8 +1,13 @@
 import { lookup } from 'node:dns/promises';
+import type { LookupAddress } from 'node:dns';
 import { isIP } from 'node:net';
 import { BadRequestException } from '@nestjs/common';
 
-export async function assertSafeUrl(urlString: string): Promise<void> {
+export async function assertSafeUrl(
+  urlString: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
   const url = new URL(urlString);
 
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -14,7 +19,20 @@ export async function assertSafeUrl(urlString: string): Promise<void> {
   }
 
   // Resolve the hostname and block any destination that points to a local/private network.
-  const addresses = await lookup(url.hostname, { all: true });
+  const addresses = await new Promise<LookupAddress[]>((resolve, reject) => {
+    const abort = () => reject(signal?.reason);
+    signal?.addEventListener('abort', abort, { once: true });
+    lookup(url.hostname, { all: true }).then(
+      (addresses) => {
+        signal?.removeEventListener('abort', abort);
+        resolve(addresses);
+      },
+      (error: unknown) => {
+        signal?.removeEventListener('abort', abort);
+        reject(error);
+      },
+    );
+  });
 
   for (const { address } of addresses) {
     if (isPrivateAddress(address)) {

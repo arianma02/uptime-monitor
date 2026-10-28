@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import dns from 'node:dns/promises';
+import {
+  ConflictException,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { MonitorsService } from './monitors.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -307,6 +312,7 @@ describe('MonitorsService', () => {
   });
 
   it('records a down result when DNS resolution fails', async () => {
+    jest.spyOn(dns, 'lookup').mockRejectedValue(new Error('DNS failure'));
     prismaMock.monitor.findUnique.mockResolvedValue({
       id: 1,
       name: 'Broken DNS',
@@ -340,6 +346,204 @@ describe('MonitorsService', () => {
         responseTimeMs: expect.any(Number),
         error: expect.any(String),
       },
+    });
+  });
+  describe('reliability', () => {
+    const monitor = {
+      id: 1,
+      name: 'Test',
+      url: 'https://8.8.8.8',
+      intervalMinutes: 5,
+      active: true,
+      createdAt: new Date(),
+    };
+
+    beforeEach(() => {
+      prismaMock.monitor.findUnique.mockResolvedValue(monitor);
+      prismaMock.checkResult.create.mockResolvedValue({ id: 1 });
+    });
+
+    it('rejects an overlapping check and allows the next check after completion', async () => {
+      let finish!: (response: Response) => void;
+      let started!: () => void;
+      const fetching = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const response = new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+      jest.spyOn(global, 'fetch').mockImplementation(() => {
+        started();
+        return response;
+      });
+      const first = service.check(1);
+      await fetching;
+      await expect(service.check(1)).rejects.toThrow(ConflictException);
+      expect(prismaMock.checkResult.create).not.toHaveBeenCalled();
+      finish(new Response(null, { status: 200 }));
+      await first;
+      await service.check(1);
+      expect(prismaMock.checkResult.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not record a down result for a database failure and releases the running flag', async () => {
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(new Response(null, { status: 200 }));
+      prismaMock.checkResult.create.mockRejectedValueOnce(
+        new Error('Database unavailable'),
+      );
+      await expect(service.check(1)).rejects.toThrow('Database unavailable');
+      expect(prismaMock.checkResult.create).toHaveBeenCalledTimes(1);
+      expect(prismaMock.checkResult.create.mock.calls[0][0].data.isUp).toBe(
+        true,
+      );
+      await service.check(1);
+      expect(prismaMock.checkResult.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('records redirects explicitly without following them', async () => {
+      const fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(new Response(null, { status: 302 }));
+      await service.check(1);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        monitor.url,
+        expect.objectContaining({ redirect: 'manual' }),
+      );
+      expect(prismaMock.checkResult.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          isUp: false,
+          statusCode: 302,
+          error: 'Redirect not followed',
+        }),
+      });
+    });
+
+    it('stops waiting for DNS when the shared deadline expires', async () => {
+      const controller = new AbortController();
+      jest.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+      let started!: () => void;
+      const resolving = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      jest.spyOn(dns, 'lookup').mockImplementation(() => {
+        started();
+        return new Promise<never>(() => {});
+      });
+      const fetchSpy = jest.spyOn(global, 'fetch');
+      const checking = service.check(1);
+      await resolving;
+      controller.abort(new Error('Check timed out'));
+      await checking;
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(prismaMock.checkResult.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          isUp: false,
+          statusCode: null,
+          error: 'Check timed out',
+        }),
+      });
+    });
+
+    it('uses the same deadline for DNS and HTTP rather than starting a second timeout', async () => {
+      const controller = new AbortController();
+      const timeoutSpy = jest
+        .spyOn(AbortSignal, 'timeout')
+        .mockReturnValue(controller.signal);
+      let started!: () => void;
+      const fetching = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      jest.spyOn(global, 'fetch').mockImplementation((_url, options) => {
+        expect(options?.signal).toBe(controller.signal);
+        started();
+        return new Promise<Response>((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => reject(controller.signal.reason),
+            { once: true },
+          );
+        });
+      });
+      const checking = service.check(1);
+      await fetching;
+      controller.abort(new Error('Check timed out'));
+      await checking;
+      expect(timeoutSpy).toHaveBeenCalledTimes(1);
+      expect(timeoutSpy).toHaveBeenCalledWith(5000);
+      expect(prismaMock.checkResult.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          isUp: false,
+          error: 'Check timed out',
+        }),
+      });
+    });
+
+    it('rejects unsafe URLs and releases the running flag', async () => {
+      prismaMock.monitor.findUnique.mockResolvedValue({
+        ...monitor,
+        url: 'http://localhost',
+      });
+      await expect(service.check(1)).rejects.toThrow(BadRequestException);
+      expect(prismaMock.checkResult.create).not.toHaveBeenCalled();
+      prismaMock.monitor.findUnique.mockResolvedValue(monitor);
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(new Response(null, { status: 200 }));
+      await service.check(1);
+      expect(prismaMock.checkResult.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not start overlapping scheduler batches', async () => {
+      let finish!: (monitors: never[]) => void;
+      prismaMock.monitor.findMany.mockReturnValue(
+        new Promise<never[]>((resolve) => {
+          finish = resolve;
+        }),
+      );
+      const first = service.checkDueMonitors();
+      await service.checkDueMonitors();
+      expect(prismaMock.monitor.findMany).toHaveBeenCalledTimes(1);
+      finish([]);
+      await first;
+      await service.checkDueMonitors();
+      expect(prismaMock.monitor.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('can run the scheduler again after a database failure', async () => {
+      prismaMock.monitor.findMany
+        .mockRejectedValueOnce(new Error('Database unavailable'))
+        .mockResolvedValue([]);
+      await expect(service.checkDueMonitors()).rejects.toThrow(
+        'Database unavailable',
+      );
+      await service.checkDueMonitors();
+      expect(prismaMock.monitor.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('skips a scheduled check while a manual check is running', async () => {
+      let finish!: (response: Response) => void;
+      let started!: () => void;
+      const fetching = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      jest.spyOn(global, 'fetch').mockImplementation(() => {
+        started();
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      });
+      const checking = service.check(1);
+      await fetching;
+      prismaMock.monitor.findMany.mockResolvedValue([
+        { ...monitor, checkResults: [] },
+      ]);
+      await service.checkDueMonitors();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      finish(new Response(null, { status: 200 }));
+      await checking;
+      expect(prismaMock.checkResult.create).toHaveBeenCalledTimes(1);
     });
   });
 });
